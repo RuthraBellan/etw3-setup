@@ -209,7 +209,7 @@ if [ ! -f "$LIBCAMERA_LIBDIR/libcamera-base.so" ]; then
             -Ddocumentation=disabled -Dpycamera=enabled)
     fi
     echo "Building libcamera — this is the slow one (20-40+ min on a Pi 4)..."
-    (cd "$BUILD_DIR/libcamera" && ninja -C build && sudo ninja -C build install)
+    (cd "$BUILD_DIR/libcamera" && ninja -j2 -C build && sudo ninja -C build install)
     echo "libcamera built and installed (commit ${LIBCAMERA_COMMIT:0:7})."
 else
     echo "libcamera already installed, skipping build."
@@ -226,7 +226,7 @@ if ! command -v rpicam-hello >/dev/null 2>&1; then
             -Denable_qt=disabled -Denable_opencv=disabled -Denable_tflite=disabled \
             -Denable_hailo=disabled)
     fi
-    (cd "$BUILD_DIR/rpicam-apps" && ninja -C build && sudo ninja -C build install)
+    (cd "$BUILD_DIR/rpicam-apps" && ninja -j2 -C build && sudo ninja -C build install)
     sudo ldconfig
     echo "rpicam-apps built and installed (commit ${RPICAM_APPS_COMMIT:0:7})."
 else
