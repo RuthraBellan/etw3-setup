@@ -1,0 +1,7 @@
+team.env
+
+# Instructor-only prep/reference material — not read by setup.sh or
+# verify.sh, deliberately excluded from what students clone.
+/README.md
+/cloud-init/
+/libcamera/
