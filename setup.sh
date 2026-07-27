@@ -20,9 +20,17 @@ set -euo pipefail
 RUN_USER="${SUDO_USER:-$USER}"
 RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
 WORKSPACE_DIR="$RUN_HOME/etw3_ws"
-LIBCAMERA_PREFIX=/opt/etw3-libcamera
+BUILD_DIR="$RUN_HOME/etw3-build"
+LIBCAMERA_LIBDIR="/usr/local/lib/aarch64-linux-gnu"
 CAMERA_ENV_FILE="$RUN_HOME/.etw3_camera_env"
 STAGE_NAME="(not started)"
+REBOOT_NEEDED=0
+
+# Pinned to the exact commits validated on real Pi 4 + Ubuntu 24.04
+# hardware on 2026-07-27 (see pi-camera-ov5647-setup-steps.md). Bump these
+# deliberately, not casually — this combination is what's actually tested.
+LIBCAMERA_COMMIT="06c385619acb10bbfb33f52f3abeb8f8c095f42b"
+RPICAM_APPS_COMMIT="d34adeb63c7eb4117efca8d4ed7969dd1b6492b5"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_CONFIG="$SCRIPT_DIR/team.env"
@@ -51,18 +59,11 @@ echo "Team number: $TEAM_NN"
 
 if [ ! -f "$ENV_CONFIG" ]; then
     cp "$ENV_EXAMPLE" "$ENV_CONFIG"
-    echo "!! Created team.env from team.env.example — this repo doesn't know"
-    echo "!! your team's config yet. Edit team.env now:"
-    echo "!!   - TEAM_REPO_URL   (leave blank if your team repo doesn't exist yet)"
-    echo "!!   - LIBCAMERA_PKG_URL"
-    echo "!!   - CAMERA_ROS_REPO"
-    echo "!! Then re-run ./setup.sh."
-    exit 1
+    echo "Created team.env from team.env.example (TEAM_REPO_URL is blank —"
+    echo "that's fine before S2; edit team.env and re-run once your team repo exists)."
 fi
 # shellcheck disable=SC1090
 source "$ENV_CONFIG"
-: "${LIBCAMERA_PKG_URL:?Set LIBCAMERA_PKG_URL in team.env}"
-: "${CAMERA_ROS_REPO:?Set CAMERA_ROS_REPO in team.env}"
 TEAM_REPO_URL="${TEAM_REPO_URL:-}"
 
 # ---------------------------------------------------------------------------
@@ -70,6 +71,16 @@ stage "Stage 1/7: apt update/upgrade"
 
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+
+if [ -f /var/run/reboot-required ]; then
+    echo "!! This upgrade needs a reboot (likely a kernel update) before we build"
+    echo "!! kernel-adjacent components (libcamera) in stage 5 — building against"
+    echo "!! a stale running kernel can misbehave."
+    echo "!! Run: sudo reboot"
+    echo "!! Then SSH back in and run ./setup.sh again — everything above this"
+    echo "!! point will skip."
+    exit 1
+fi
 
 # ---------------------------------------------------------------------------
 stage "Stage 2/7: 2 GB swap (mandatory on 2 GB RAM)"
@@ -132,7 +143,10 @@ sudo apt-get install -y python3-opencv python3-numpy python3-pip i2c-tools pytho
 python3 -m pip install --break-system-packages --upgrade rpi-lgpio   # gpiozero's GPIO backend on Ubuntu (Pi 4)
 
 CONFIG_TXT=/boot/firmware/config.txt
-grep -q "^dtparam=i2c_arm=on" "$CONFIG_TXT" || echo "dtparam=i2c_arm=on" | sudo tee -a "$CONFIG_TXT" >/dev/null
+if ! grep -q "^dtparam=i2c_arm=on" "$CONFIG_TXT"; then
+    echo "dtparam=i2c_arm=on" | sudo tee -a "$CONFIG_TXT" >/dev/null
+    REBOOT_NEEDED=1
+fi
 grep -q "^i2c-dev" /etc/modules || echo "i2c-dev" | sudo tee -a /etc/modules >/dev/null
 sudo modprobe i2c-dev || true
 
@@ -158,36 +172,90 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-stage "Stage 5/7: prebuilt libcamera + camera_ros + LD_LIBRARY_PATH workaround"
-# NOTE (instructor, before S1): build and host the prebuilt libcamera
-# package referenced by LIBCAMERA_PKG_URL — see etw3-setup/libcamera/README.md.
-# Students never compile libcamera on the Pi.
+stage "Stage 5/7: camera (libcamera + rpicam-apps, built from source; camera_ros)"
+# Builds Raspberry Pi's libcamera fork + rpicam-apps from source, exactly as
+# validated on real Pi 4 + Ubuntu 24.04 hardware on 2026-07-27 (see
+# pi-camera-ov5647-setup-steps.md in the course-materials repo). This is a
+# deliberate departure from "students never compile on the Pi": we tried a
+# prebuilt-package approach first and hit enough friction producing/hosting
+# it under time pressure that building live, from a pinned/validated recipe,
+# turned out more reliable for S1. It costs real class time — see the S1
+# run-sheet for the timing this needs to absorb.
+#
+# NOTE: this needs ~20-40+ min for libcamera alone on a Pi 4, plus more for
+# rpicam-apps. It's also CPU-bound, so staggering start times (which helps
+# the network-bound apt/ROS stages) doesn't shrink it much — every team's
+# Pi is going to be busy compiling for a real chunk of the session.
 
-if [ ! -d "$LIBCAMERA_PREFIX" ]; then
-    curl -fsSL -o /tmp/etw3-libcamera.tar.gz "$LIBCAMERA_PKG_URL"
-    sudo mkdir -p "$LIBCAMERA_PREFIX"
-    sudo tar -xzf /tmp/etw3-libcamera.tar.gz -C "$LIBCAMERA_PREFIX"
-    echo "Installed prebuilt libcamera to $LIBCAMERA_PREFIX."
+mkdir -p "$BUILD_DIR"
+
+if [ ! -f "$LIBCAMERA_LIBDIR/libcamera-base.so" ]; then
+    sudo apt-get install -y git meson cmake ninja-build python3-jinja2 \
+        libboost-dev libgnutls28-dev openssl libtiff-dev pybind11-dev \
+        python3-yaml python3-ply libglib2.0-dev libgstreamer-plugins-base1.0-dev \
+        libboost-program-options-dev libdrm-dev libexif-dev libpng-dev
+
+    if [ ! -d "$BUILD_DIR/libcamera" ]; then
+        git clone https://github.com/raspberrypi/libcamera.git "$BUILD_DIR/libcamera"
+        git -C "$BUILD_DIR/libcamera" checkout "$LIBCAMERA_COMMIT"
+    fi
+    if [ ! -d "$BUILD_DIR/libcamera/build" ]; then
+        (cd "$BUILD_DIR/libcamera" && meson setup build --buildtype=release \
+            -Dpipelines=rpi/vc4 -Dipas=rpi/vc4 -Dv4l2=true -Dgstreamer=enabled \
+            -Dtest=false -Dlc-compliance=disabled -Dcam=disabled -Dqcam=disabled \
+            -Ddocumentation=disabled -Dpycamera=enabled)
+    fi
+    echo "Building libcamera — this is the slow one (20-40+ min on a Pi 4)..."
+    (cd "$BUILD_DIR/libcamera" && ninja -C build && sudo ninja -C build install)
+    echo "libcamera built and installed (commit ${LIBCAMERA_COMMIT:0:7})."
 else
-    echo "$LIBCAMERA_PREFIX already present, skipping download."
+    echo "libcamera already installed, skipping build."
 fi
 
+if ! command -v rpicam-hello >/dev/null 2>&1; then
+    if [ ! -d "$BUILD_DIR/rpicam-apps" ]; then
+        git clone https://github.com/raspberrypi/rpicam-apps.git "$BUILD_DIR/rpicam-apps"
+        git -C "$BUILD_DIR/rpicam-apps" checkout "$RPICAM_APPS_COMMIT"
+    fi
+    if [ ! -d "$BUILD_DIR/rpicam-apps/build" ]; then
+        (cd "$BUILD_DIR/rpicam-apps" && meson setup build \
+            -Denable_libav=disabled -Denable_drm=enabled -Denable_egl=disabled \
+            -Denable_qt=disabled -Denable_opencv=disabled -Denable_tflite=disabled \
+            -Denable_hailo=disabled)
+    fi
+    (cd "$BUILD_DIR/rpicam-apps" && ninja -C build && sudo ninja -C build install)
+    sudo ldconfig
+    echo "rpicam-apps built and installed (commit ${RPICAM_APPS_COMMIT:0:7})."
+else
+    echo "rpicam-apps already installed, skipping build."
+fi
+
+CONFIG_TXT=/boot/firmware/config.txt
+if ! grep -q "^dtoverlay=ov5647" "$CONFIG_TXT"; then
+    sudo sed -i 's/^camera_auto_detect=1/camera_auto_detect=0\ndtoverlay=ov5647/' "$CONFIG_TXT"
+    REBOOT_NEEDED=1
+    echo "Set camera_auto_detect=0 + dtoverlay=ov5647 in $CONFIG_TXT."
+else
+    echo "Camera overlay already configured."
+fi
+
+# ros-jazzy-camera-ros pulls in a plain/upstream ros-jazzy-libcamera as a
+# dependency, which is NOT the Pi fork we just built and will crash
+# (ControlInfoMap / IPA proxy errors). The env file below forces it to use
+# our build instead — this is the confirmed-working workaround, not a
+# permanent fix (see pi-camera-ov5647-setup-steps.md, Known Gotcha #6).
+sudo apt-get install -y ros-jazzy-camera-ros
+
 cat > "$CAMERA_ENV_FILE" <<EOF
-# Sourced from ~/.bashrc. Session-only on purpose — this points at our
-# custom libcamera build, not the system one. See the S4 camera handout
-# for why this can't be a system-wide ld.so.conf entry.
-export LD_LIBRARY_PATH="$LIBCAMERA_PREFIX/lib:\$LD_LIBRARY_PATH"
-export PKG_CONFIG_PATH="$LIBCAMERA_PREFIX/lib/pkgconfig:\$PKG_CONFIG_PATH"
+# Sourced from ~/.bashrc. Points camera_ros at the Raspberry Pi libcamera
+# fork built in setup.sh stage 5, instead of the broken generic one
+# ros-jazzy-camera-ros pulls in. Session-only workaround, not permanent —
+# see Known Gotcha #6 in pi-camera-ov5647-setup-steps.md.
+export LD_LIBRARY_PATH="$LIBCAMERA_LIBDIR:\$LD_LIBRARY_PATH"
+export LIBCAMERA_IPA_MODULE_PATH="$LIBCAMERA_LIBDIR/libcamera/ipa"
 EOF
 grep -q "source $CAMERA_ENV_FILE" "$RUN_HOME/.bashrc" || \
     echo "source $CAMERA_ENV_FILE" >> "$RUN_HOME/.bashrc"
-
-mkdir -p "$WORKSPACE_DIR/src"
-if [ ! -d "$WORKSPACE_DIR/src/camera_ros" ]; then
-    git clone "$CAMERA_ROS_REPO" "$WORKSPACE_DIR/src/camera_ros"
-else
-    echo "camera_ros already cloned, skipping."
-fi
 
 # ---------------------------------------------------------------------------
 stage "Stage 6/7: user groups (video, i2c, dialout)"
@@ -224,5 +292,11 @@ grep -q "source $WORKSPACE_DIR/install/setup.bash" "$RUN_HOME/.bashrc" || \
 # ---------------------------------------------------------------------------
 echo
 echo "==> setup.sh finished for team $TEAM_NN."
-echo "Log out and back in (or run: newgrp video) so group membership takes"
-echo "effect, then run ./verify.sh."
+if [ "$REBOOT_NEEDED" -eq 1 ]; then
+    echo "A reboot is required (I2C and/or camera device-tree changes need it"
+    echo "to take effect): run 'sudo reboot', SSH back in once it's up, then"
+    echo "run ./verify.sh directly — no need to re-run ./setup.sh."
+else
+    echo "Log out and back in (or run: newgrp video) so group membership takes"
+    echo "effect, then run ./verify.sh."
+fi
