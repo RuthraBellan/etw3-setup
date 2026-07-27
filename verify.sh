@@ -19,8 +19,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # freenove_driver (motor/ultrasonic checks below) lives in the workspace
 # install space, built by setup.sh stage 4/7.
+# ROS 2's setup.bash references variables (e.g. AMENT_TRACE_SETUP_FILES)
+# without a default fallback, which trips `set -u`. Relax it just for sourcing.
+set +u
 [ -f /opt/ros/jazzy/setup.bash ] && source /opt/ros/jazzy/setup.bash
 [ -f "$WORKSPACE_DIR/install/setup.bash" ] && source "$WORKSPACE_DIR/install/setup.bash"
+set -u
 
 RESULTS=()
 
@@ -38,8 +42,11 @@ echo
 # ---------------------------------------------------------------------------
 echo "-- Camera --"
 if [ -f "$CAMERA_ENV_FILE" ]; then
+    # References $LD_LIBRARY_PATH, which may be unset — same set -u issue as above.
+    set +u
     # shellcheck disable=SC1090
     source "$CAMERA_ENV_FILE"
+    set -u
 fi
 
 if command -v rpicam-hello >/dev/null 2>&1; then
