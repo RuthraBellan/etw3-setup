@@ -199,8 +199,14 @@ if [ ! -f "$LIBCAMERA_LIBDIR/libcamera-base.so" ]; then
         libboost-program-options-dev libdrm-dev libexif-dev libpng-dev
 
     if [ ! -d "$BUILD_DIR/libcamera" ]; then
-        git clone https://github.com/raspberrypi/libcamera.git "$BUILD_DIR/libcamera"
-        git -C "$BUILD_DIR/libcamera" checkout "$LIBCAMERA_COMMIT"
+        # Shallow-fetch just the pinned commit instead of a full clone — this repo's
+        # full history is large and student teams are on hotspot-grade bandwidth.
+        # GitHub allows fetching an arbitrary reachable commit SHA on public repos.
+        mkdir -p "$BUILD_DIR/libcamera"
+        git -C "$BUILD_DIR/libcamera" init -q
+        git -C "$BUILD_DIR/libcamera" remote add origin https://github.com/raspberrypi/libcamera.git
+        git -C "$BUILD_DIR/libcamera" fetch --depth 1 origin "$LIBCAMERA_COMMIT"
+        git -C "$BUILD_DIR/libcamera" checkout -q FETCH_HEAD
     fi
     if [ ! -d "$BUILD_DIR/libcamera/build" ]; then
         (cd "$BUILD_DIR/libcamera" && meson setup build --buildtype=release \
@@ -217,8 +223,12 @@ fi
 
 if ! command -v rpicam-hello >/dev/null 2>&1; then
     if [ ! -d "$BUILD_DIR/rpicam-apps" ]; then
-        git clone https://github.com/raspberrypi/rpicam-apps.git "$BUILD_DIR/rpicam-apps"
-        git -C "$BUILD_DIR/rpicam-apps" checkout "$RPICAM_APPS_COMMIT"
+        # Shallow-fetch just the pinned commit — see libcamera clone above for why.
+        mkdir -p "$BUILD_DIR/rpicam-apps"
+        git -C "$BUILD_DIR/rpicam-apps" init -q
+        git -C "$BUILD_DIR/rpicam-apps" remote add origin https://github.com/raspberrypi/rpicam-apps.git
+        git -C "$BUILD_DIR/rpicam-apps" fetch --depth 1 origin "$RPICAM_APPS_COMMIT"
+        git -C "$BUILD_DIR/rpicam-apps" checkout -q FETCH_HEAD
     fi
     if [ ! -d "$BUILD_DIR/rpicam-apps/build" ]; then
         (cd "$BUILD_DIR/rpicam-apps" && meson setup build \
