@@ -7,7 +7,7 @@
 # customisation screen during flashing — see cloud-init/README.md) has
 # already applied.
 #
-#   git clone https://github.com/<org>/etw3-setup && cd etw3-setup
+#   git clone https://github.com/RuthraBellan/etw3-setup && cd etw3-setup
 #   ./setup.sh
 #
 # Safe to re-run: every stage checks whether it already did its job before
