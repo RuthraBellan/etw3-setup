@@ -290,10 +290,14 @@ else
     echo "(Fine before S2; edit team.env and re-run once your team repo exists.)"
 fi
 
+# ROS 2's setup.bash references variables (e.g. AMENT_TRACE_SETUP_FILES)
+# without a default fallback, which trips `set -u`. Relax it just for sourcing.
+set +u
 # shellcheck disable=SC1091
 source /opt/ros/jazzy/setup.bash
 # shellcheck disable=SC1090
 source "$CAMERA_ENV_FILE"
+set -u
 
 cd "$WORKSPACE_DIR"
 rosdep install --from-paths src --ignore-src -r -y
