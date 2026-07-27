@@ -67,23 +67,10 @@ source "$ENV_CONFIG"
 TEAM_REPO_URL="${TEAM_REPO_URL:-}"
 
 # ---------------------------------------------------------------------------
-stage "Stage 1/7: apt update/upgrade"
-
-sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
-
-if [ -f /var/run/reboot-required ]; then
-    echo "!! This upgrade needs a reboot (likely a kernel update) before we build"
-    echo "!! kernel-adjacent components (libcamera) in stage 5 — building against"
-    echo "!! a stale running kernel can misbehave."
-    echo "!! Run: sudo reboot"
-    echo "!! Then SSH back in and run ./setup.sh again — everything above this"
-    echo "!! point will skip."
-    exit 1
-fi
-
-# ---------------------------------------------------------------------------
-stage "Stage 2/7: 2 GB swap (mandatory on 2 GB RAM)"
+stage "Stage 1/7: 2 GB swap (mandatory on 2 GB RAM)"
+# Runs before the first apt upgrade: a swapless 2 GB Pi can OOM/thrash during
+# a big first-boot upgrade (kernel, systemd, etc.), which can hang the whole
+# box hard enough to drop off the network entirely.
 
 SWAPFILE=/swapfile
 if [ ! -f "$SWAPFILE" ]; then
@@ -96,6 +83,22 @@ if [ ! -f "$SWAPFILE" ]; then
 else
     sudo swapon "$SWAPFILE" 2>/dev/null || true
     echo "$SWAPFILE already exists, left as is."
+fi
+
+# ---------------------------------------------------------------------------
+stage "Stage 2/7: apt update/upgrade"
+
+sudo apt-get update
+sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+
+if [ -f /var/run/reboot-required ]; then
+    echo "!! This upgrade needs a reboot (likely a kernel update) before we build"
+    echo "!! kernel-adjacent components (libcamera) in stage 5 — building against"
+    echo "!! a stale running kernel can misbehave."
+    echo "!! Run: sudo reboot"
+    echo "!! Then SSH back in and run ./setup.sh again — everything above this"
+    echo "!! point will skip."
+    exit 1
 fi
 
 # ---------------------------------------------------------------------------
