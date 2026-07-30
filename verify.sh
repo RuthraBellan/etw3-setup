@@ -101,18 +101,21 @@ fi
 echo
 echo "-- Laptop-to-Pi topic visibility --"
 if command -v ros2 >/dev/null 2>&1; then
+    # Same set -u/ROS setup.bash issue as above.
+    set +u
     # shellcheck disable=SC1091
     source /opt/ros/jazzy/setup.bash
+    set -u
     ros2 run demo_nodes_py talker >/tmp/etw3-talker.log 2>&1 &
     TALKER_PID=$!
     sleep 1
 
     echo "   A talker is now publishing /chatter on this Pi."
-    echo "   On Laptop B (joined to this team's hotspot), run:"
+    echo "   On your laptop (joined to this team's hotspot), run:"
     echo "     source /opt/ros/jazzy/setup.bash"
     echo "     ros2 topic echo /chatter"
     echo "   You should see messages within a few seconds."
-    read -r -p "   Did messages appear on Laptop B? [y/N] " ANSWER
+    read -r -p "   Did messages appear on your laptop? [y/N] " ANSWER
     kill "$TALKER_PID" 2>/dev/null || true
     wait "$TALKER_PID" 2>/dev/null || true
 
