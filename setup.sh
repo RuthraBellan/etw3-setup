@@ -44,6 +44,37 @@ stage() {
     echo "==> ${STAGE_NAME}"
 }
 
+# apt-get install, with an automatic fix for a recurring real-hardware issue:
+# a runtime lib already installed at a security-patched version ahead of what
+# the arm64 (ports.ubuntu.com) archive currently offers for its matching -dev
+# package, which apt reports as an exact-version "unmet dependencies... held
+# broken packages" error (seen with liblz4/libzstd/zlib1g, then again with
+# libidn2/libp11-kit/libpcre2/libselinux1/nettle during S2). Plain
+# --allow-downgrades on the failing install does NOT fix this in practice —
+# apt's solver won't choose to downgrade on its own. This parses the error
+# for the exact "<pkg> (= <version>)" constraints apt names, pins exactly
+# those packages down to match, then retries the original install once.
+apt_install_retry() {
+    local out
+    if out=$(sudo apt-get install -y "$@" 2>&1); then
+        echo "$out"
+        return 0
+    fi
+    echo "$out"
+
+    local fixups
+    fixups="$(echo "$out" | grep -oE 'Depends: [A-Za-z0-9.+-]+ \(= [A-Za-z0-9.:+~-]+\)' | sed -E 's/Depends: //; s/ \(= (.*)\)/=\1/' | sort -u)"
+    if [ -z "$fixups" ]; then
+        return 1
+    fi
+
+    echo "!! Detected an exact-version -dev/runtime-lib mismatch. Pinning:"
+    echo "$fixups"
+    # shellcheck disable=SC2086
+    sudo apt-get install -y --allow-downgrades $fixups || true
+    sudo apt-get install -y "$@"
+}
+
 # ---------------------------------------------------------------------------
 stage "Stage 0/7: sanity checks + team config"
 
@@ -121,26 +152,7 @@ if ! dpkg -s ros-jazzy-ros-base >/dev/null 2>&1; then
 
     sudo apt-get update
     sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
-    if ! sudo apt-get install -y ros-jazzy-ros-base python3-colcon-common-extensions python3-rosdep; then
-        # Seen on real hardware: liblz4-1/libzstd1/zlib1g were already
-        # installed at a security-patched version (from noble-updates) on
-        # some Pis but not others (missing/not-yet-fetched noble-updates
-        # pocket), while their -dev counterparts were never installed and
-        # only resolvable at the older noble/main version — an exact-version
-        # mismatch apt reports as "unmet dependencies... held broken
-        # packages." Plain --allow-downgrades on the ros-jazzy-ros-base
-        # metapackage install does NOT fix this in practice (confirmed on
-        # real hardware during S2) — apt's solver won't choose to downgrade
-        # on its own. Pinning the exact matching versions directly does.
-        echo "!! apt install failed — likely a liblz4/libzstd/zlib1g -dev"
-        echo "!! version mismatch. Pinning matching versions and retrying..."
-        sudo apt-get install -y --allow-downgrades \
-            liblz4-1=1.9.4-1build1 liblz4-dev=1.9.4-1build1 \
-            libzstd1=1.5.5+dfsg2-2build1 libzstd-dev=1.5.5+dfsg2-2build1 \
-            zlib1g=1:1.3.dfsg-3.1ubuntu2 zlib1g-dev=1:1.3.dfsg-3.1ubuntu2 \
-            || true   # fine if these exact versions/packages aren't the issue on this Pi
-        sudo apt-get install -y --allow-downgrades ros-jazzy-ros-base python3-colcon-common-extensions python3-rosdep
-    fi
+    apt_install_retry ros-jazzy-ros-base python3-colcon-common-extensions python3-rosdep
 
     sudo rosdep init || true   # already-initialized is fine, not an error
     rosdep update
@@ -161,7 +173,7 @@ stage "Stage 4/7: OpenCV/numpy + Freenove I2C/GPIO libs + enable I2C"
 # freenove-driver-pkg/freenove_driver/NOTICE.md (copied alongside) for
 # license (CC BY-NC-SA 3.0) and exactly what was changed from the original.
 
-sudo apt-get install -y python3-opencv python3-numpy python3-pip i2c-tools python3-smbus python3-gpiozero
+apt_install_retry python3-opencv python3-numpy python3-pip i2c-tools python3-smbus python3-gpiozero
 python3 -m pip install --break-system-packages --upgrade rpi-lgpio   # gpiozero's GPIO backend on Ubuntu (Pi 4)
 
 CONFIG_TXT=/boot/firmware/config.txt
@@ -212,7 +224,7 @@ stage "Stage 5/7: camera (libcamera + rpicam-apps, built from source; camera_ros
 mkdir -p "$BUILD_DIR"
 
 if [ ! -f "$LIBCAMERA_LIBDIR/libcamera-base.so" ]; then
-    sudo apt-get install -y git meson cmake ninja-build python3-jinja2 \
+    apt_install_retry git meson cmake ninja-build python3-jinja2 \
         libboost-dev libgnutls28-dev openssl libtiff-dev pybind11-dev \
         python3-yaml python3-ply libglib2.0-dev libgstreamer-plugins-base1.0-dev \
         libboost-program-options-dev libdrm-dev libexif-dev libpng-dev
@@ -276,7 +288,7 @@ fi
 # (ControlInfoMap / IPA proxy errors). The env file below forces it to use
 # our build instead — this is the confirmed-working workaround, not a
 # permanent fix (see pi-camera-ov5647-setup-steps.md, Known Gotcha #6).
-sudo apt-get install -y ros-jazzy-camera-ros
+apt_install_retry ros-jazzy-camera-ros
 
 cat > "$CAMERA_ENV_FILE" <<EOF
 # Sourced from ~/.bashrc. Points camera_ros at the Raspberry Pi libcamera
