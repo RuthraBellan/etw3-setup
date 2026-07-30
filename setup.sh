@@ -122,18 +122,23 @@ if ! dpkg -s ros-jazzy-ros-base >/dev/null 2>&1; then
     sudo apt-get update
     sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
     if ! sudo apt-get install -y ros-jazzy-ros-base python3-colcon-common-extensions python3-rosdep; then
-        # Seen on real hardware (arm64/ports.ubuntu.com specifically): a
-        # security-patched runtime lib (e.g. liblz4-1) is already installed
-        # a version ahead of what the ports archive currently offers for its
-        # matching -dev package, so apt can't satisfy the -dev package's
-        # exact-version dependency without downgrading the runtime lib —
-        # "unmet dependencies... you have held broken packages." A plain
-        # retry doesn't fix this; --allow-downgrades lets apt resolve it by
-        # downgrading the runtime libs to match the only -dev version the
-        # archive actually has.
-        echo "!! apt install failed — likely an arm64 archive version lag"
-        echo "!! between a runtime lib and its -dev package. Retrying with"
-        echo "!! --allow-downgrades..."
+        # Seen on real hardware: liblz4-1/libzstd1/zlib1g were already
+        # installed at a security-patched version (from noble-updates) on
+        # some Pis but not others (missing/not-yet-fetched noble-updates
+        # pocket), while their -dev counterparts were never installed and
+        # only resolvable at the older noble/main version — an exact-version
+        # mismatch apt reports as "unmet dependencies... held broken
+        # packages." Plain --allow-downgrades on the ros-jazzy-ros-base
+        # metapackage install does NOT fix this in practice (confirmed on
+        # real hardware during S2) — apt's solver won't choose to downgrade
+        # on its own. Pinning the exact matching versions directly does.
+        echo "!! apt install failed — likely a liblz4/libzstd/zlib1g -dev"
+        echo "!! version mismatch. Pinning matching versions and retrying..."
+        sudo apt-get install -y --allow-downgrades \
+            liblz4-1=1.9.4-1build1 liblz4-dev=1.9.4-1build1 \
+            libzstd1=1.5.5+dfsg2-2build1 libzstd-dev=1.5.5+dfsg2-2build1 \
+            zlib1g=1:1.3.dfsg-3.1ubuntu2 zlib1g-dev=1:1.3.dfsg-3.1ubuntu2 \
+            || true   # fine if these exact versions/packages aren't the issue on this Pi
         sudo apt-get install -y --allow-downgrades ros-jazzy-ros-base python3-colcon-common-extensions python3-rosdep
     fi
 
