@@ -55,12 +55,22 @@ stage() {
 # for the exact "<pkg> (= <version>)" constraints apt names, pins exactly
 # those packages down to match, then retries the original install once.
 apt_install_retry() {
-    local out
-    if out=$(sudo apt-get install -y "$@" 2>&1); then
-        echo "$out"
+    local tmp rc out
+    tmp="$(mktemp)"
+    # The pipeline must be the `if` condition itself, not a bare statement -
+    # set -e would otherwise abort here on failure before we ever get to
+    # check PIPESTATUS or attempt the retry below.
+    if sudo apt-get install -y "$@" 2>&1 | tee "$tmp"; then
+        rc=0
+    else
+        rc="${PIPESTATUS[0]}"
+    fi
+    if [ "$rc" -eq 0 ]; then
+        rm -f "$tmp"
         return 0
     fi
-    echo "$out"
+    out="$(cat "$tmp")"
+    rm -f "$tmp"
 
     local fixups
     fixups="$(echo "$out" | grep -oE 'Depends: [A-Za-z0-9.+-]+ \(= [A-Za-z0-9.:+~-]+\)' | sed -E 's/Depends: //; s/ \(= (.*)\)/=\1/' | sort -u)"
@@ -226,7 +236,9 @@ mkdir -p "$BUILD_DIR"
 if [ ! -f "$LIBCAMERA_LIBDIR/libcamera-base.so" ]; then
     # build-essential (gcc/g++/make) isn't pulled in by anything else here -
     # a real Pi hit "Unknown compiler(s): c++/g++/clang++/..." without it.
-    apt_install_retry build-essential git meson cmake ninja-build python3-jinja2 \
+    # libunwind-dev: gstreamer-1.0's pkg-config chain needs it (a real Pi hit
+    # "Package 'libunwind', required by 'gstreamer-1.0', not found").
+    apt_install_retry build-essential libunwind-dev git meson cmake ninja-build python3-jinja2 \
         libboost-dev libgnutls28-dev openssl libtiff-dev pybind11-dev \
         python3-yaml python3-ply libglib2.0-dev libgstreamer-plugins-base1.0-dev \
         libboost-program-options-dev libdrm-dev libexif-dev libpng-dev
@@ -346,6 +358,19 @@ grep -q "source $WORKSPACE_DIR/install/setup.bash" "$RUN_HOME/.bashrc" || \
     echo "source $WORKSPACE_DIR/install/setup.bash" >> "$RUN_HOME/.bashrc"
 
 # ---------------------------------------------------------------------------
+# REBOOT_NEEDED only reflects edits made in *this* run - if a prior run
+# edited config.txt (I2C/camera overlay) and then crashed on something
+# unrelated before reaching this point, a later successful run would have
+# nothing to set REBOOT_NEEDED=1 again, and would wrongly report no reboot
+# needed even though config.txt was never actually applied via a reboot.
+# Compare config.txt's mtime against boot time instead, which is true
+# regardless of which run made the edit.
+CONFIG_TXT_MTIME="$(stat -c %Y /boot/firmware/config.txt 2>/dev/null || echo 0)"
+BOOT_TIME="$(date -d "$(uptime -s)" +%s 2>/dev/null || echo 0)"
+if [ "$CONFIG_TXT_MTIME" -gt "$BOOT_TIME" ]; then
+    REBOOT_NEEDED=1
+fi
+
 echo
 echo "==> setup.sh finished for team $TEAM_NN."
 if [ "$REBOOT_NEEDED" -eq 1 ]; then
