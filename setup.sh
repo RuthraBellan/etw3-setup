@@ -121,7 +121,18 @@ if ! dpkg -s ros-jazzy-ros-base >/dev/null 2>&1; then
 
     sudo apt-get update
     sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
-    sudo apt-get install -y ros-jazzy-ros-base python3-colcon-common-extensions python3-rosdep
+    if ! sudo apt-get install -y ros-jazzy-ros-base python3-colcon-common-extensions python3-rosdep; then
+        # Seen on real hardware: a transient apt mirror-sync mismatch where a
+        # security-patched runtime lib (e.g. liblz4-1) is available a moment
+        # before the matching -dev package's metadata catches up, producing
+        # "unmet dependencies... you have held broken packages." A fresh
+        # update/upgrade usually resolves it; retry once before giving up.
+        echo "!! apt install failed, possibly a transient mirror-sync version"
+        echo "!! mismatch. Refreshing package lists and retrying once..."
+        sudo apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+        sudo apt-get install -y ros-jazzy-ros-base python3-colcon-common-extensions python3-rosdep
+    fi
 
     sudo rosdep init || true   # already-initialized is fine, not an error
     rosdep update
