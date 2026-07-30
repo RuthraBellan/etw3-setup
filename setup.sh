@@ -224,7 +224,9 @@ stage "Stage 5/7: camera (libcamera + rpicam-apps, built from source; camera_ros
 mkdir -p "$BUILD_DIR"
 
 if [ ! -f "$LIBCAMERA_LIBDIR/libcamera-base.so" ]; then
-    apt_install_retry git meson cmake ninja-build python3-jinja2 \
+    # build-essential (gcc/g++/make) isn't pulled in by anything else here -
+    # a real Pi hit "Unknown compiler(s): c++/g++/clang++/..." without it.
+    apt_install_retry build-essential git meson cmake ninja-build python3-jinja2 \
         libboost-dev libgnutls28-dev openssl libtiff-dev pybind11-dev \
         python3-yaml python3-ply libglib2.0-dev libgstreamer-plugins-base1.0-dev \
         libboost-program-options-dev libdrm-dev libexif-dev libpng-dev
