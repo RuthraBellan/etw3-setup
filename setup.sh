@@ -241,7 +241,12 @@ if [ ! -f "$LIBCAMERA_LIBDIR/libcamera-base.so" ]; then
         git -C "$BUILD_DIR/libcamera" fetch --depth 1 origin "$LIBCAMERA_COMMIT"
         git -C "$BUILD_DIR/libcamera" checkout -q FETCH_HEAD
     fi
-    if [ ! -d "$BUILD_DIR/libcamera/build" ]; then
+    if [ ! -f "$BUILD_DIR/libcamera/build/build.ninja" ]; then
+        # Check for build.ninja, not just the build/ dir existing - meson
+        # creates the dir before it finishes configuring, so a prior failed
+        # run (e.g. missing compiler) can leave a build/ dir with no
+        # build.ninja in it, which this stage would otherwise skip past.
+        rm -rf "$BUILD_DIR/libcamera/build"
         (cd "$BUILD_DIR/libcamera" && meson setup build --buildtype=release \
             -Dpipelines=rpi/vc4 -Dipas=rpi/vc4 -Dv4l2=true -Dgstreamer=enabled \
             -Dtest=false -Dlc-compliance=disabled -Dcam=disabled -Dqcam=disabled \
@@ -263,7 +268,8 @@ if ! command -v rpicam-hello >/dev/null 2>&1; then
         git -C "$BUILD_DIR/rpicam-apps" fetch --depth 1 origin "$RPICAM_APPS_COMMIT"
         git -C "$BUILD_DIR/rpicam-apps" checkout -q FETCH_HEAD
     fi
-    if [ ! -d "$BUILD_DIR/rpicam-apps/build" ]; then
+    if [ ! -f "$BUILD_DIR/rpicam-apps/build/build.ninja" ]; then
+        rm -rf "$BUILD_DIR/rpicam-apps/build"
         (cd "$BUILD_DIR/rpicam-apps" && meson setup build \
             -Denable_libav=disabled -Denable_drm=enabled -Denable_egl=disabled \
             -Denable_qt=disabled -Denable_opencv=disabled -Denable_tflite=disabled \
