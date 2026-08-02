@@ -8,11 +8,20 @@ lives in `src/` here, as normal ROS 2 packages.
 
 This template lives as a subfolder inside `etw3-setup` (the same repo you
 already cloned onto your Pi in S1) rather than its own separate GitHub
-repo, so there's nothing extra to clone first. One team member:
+repo, so there's nothing extra to clone first.
+
+**Important: the steps below create a throwaway staging copy, not your
+real working copy.** Its only job is to get the template's content pushed
+to a new GitHub repo. Your actual, permanent working copy gets created
+separately, afterward, in the right place on the Pi — see "How this
+connects to your robot" below. Don't keep coding in this staging copy.
+
+One team member, using a scratch location like `/tmp` so it's obviously
+disposable:
 
 ```
-cp -r ~/etw3-setup/team-repo-template ~/etw3-team-NN
-cd ~/etw3-team-NN
+cp -r ~/etw3-setup/team-repo-template /tmp/etw3-team-NN
+cd /tmp/etw3-team-NN
 git init
 git add -A && git commit -m "Start from etw3 team template"
 ```
@@ -28,9 +37,11 @@ git push -u origin main
 
 On GitHub, go to that new repo's Settings > Collaborators and add your
 teammate so they can push too — the repo lives on one person's account,
-so without this step the other teammate can't push. Everyone on the team
-then clones *that new repo* — not `etw3-setup`, and not this template
-folder directly.
+so without this step the other teammate can't push.
+
+Once the push succeeds, delete this staging copy — `rm -rf
+/tmp/etw3-team-NN` — you won't use it again. Your real working copy comes
+from the Pi cloning your new repo, in the next section.
 
 ## Letting the Pi push and pull from your repo
 
@@ -56,6 +67,11 @@ alongside everything else. Put your repo's SSH URL in `team.env` on the Pi
 (`TEAM_REPO_URL=...`) — see the S1 setup handout. After that, every time
 you `git push` from your laptop, `git pull && colcon build` on the Pi picks
 it up.
+
+**`~/etw3_ws/src/etw3_teamNN` is your one real working copy from here on**
+— not the `/tmp` staging copy from the previous section, and not a copy
+sitting anywhere else in your home directory. Every lab sheet's `cd`
+commands assume you're working inside this path.
 
 You don't need to vendor any hardware driver code yourselves — the motor
 and ultrasonic sensor drivers (`freenove_driver`) are already built into
