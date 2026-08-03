@@ -62,12 +62,14 @@ fi
 # ---------------------------------------------------------------------------
 echo
 echo "-- Ultrasonic --"
-OUT="$(python3 "$SCRIPT_DIR/checks/check_ultrasonic.py" 2>&1)"
+OUT="$(timeout 10 python3 "$SCRIPT_DIR/checks/check_ultrasonic.py" 2>&1)"
 RC=$?
 if [ "$RC" -eq 0 ]; then
     record "Ultrasonic" "PASS" "$OUT"
 elif [ "$RC" -eq 2 ]; then
     record "Ultrasonic" "SKIP" "freenove_driver not built/sourced yet — rerun setup.sh"
+elif [ "$RC" -eq 124 ]; then
+    record "Ultrasonic" "FAIL" "timed out after 10s waiting for a reading — check sensor wiring/connector"
 else
     record "Ultrasonic" "FAIL" "$OUT"
 fi
